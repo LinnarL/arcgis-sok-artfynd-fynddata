@@ -1,0 +1,21 @@
+__pycache__/
+*.pyc
+*.pyt.xml
+*.lock
+*.aprx.bak
+
+# Nedladdade referenslistor och forinstallningar ligger under %LOCALAPPDATA%,
+# men fanga upp dem om nagon lagger dem har.
+cache/
+presets/
+areas_*.json
+
+# Data
+*.gdb/
+*.shp
+*.dbf
+*.shx
+*.sbn
+*.sbx
+*.prj
+*.cpg
