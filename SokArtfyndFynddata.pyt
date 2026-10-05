@@ -1998,7 +1998,10 @@ class SokIFynddata:
         cat = "1. Taxa"
         taxon_ids = parameter("taxon_ids", "Taxon-id (ett eller flera)",
                               "GPString", category=cat)
-        underlying = parameter("include_underlying", "Inkludera underliggande taxa",
+        # Flerradig textruta, annars tappar Pro radbrytningarna när en kolumn
+        # klistras in från Excel och id:na smälter ihop till ett enda tal.
+        taxon_ids.controlCLSID = "{E5456E51-0C41-4797-9EE4-5269820C6F0E}"
+        underlying =parameter("include_underlying", "Inkludera underliggande taxa",
                                "GPBoolean", category=cat)
         underlying.value = True
         only_species = parameter("only_species", "Inkludera endast arter",
