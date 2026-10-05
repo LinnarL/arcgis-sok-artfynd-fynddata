@@ -1,4 +1,4 @@
-# Sök i Fynddata
+# Sök artfynd i Fynddata
 
 ArcGIS Pro-verktygslåda som söker i SLU Artdatabankens Species Observation System (SOS) och
 skriver resultatet till en punkt-featureklass. Sökfiltren följer webbapplikationen
@@ -14,7 +14,7 @@ Geografi, Fyndegenskaper och Dataset.
 
 ## Lägga till i ArcGIS Pro
 
-Katalogfönstret, högerklicka på Toolboxes, Add Toolbox, och peka ut `SokIFynddata.pyt`.
+Katalogfönstret, högerklicka på Toolboxes, Add Toolbox, och peka ut `SokArtfyndFynddata.pyt`.
 
 ## Verktyg
 

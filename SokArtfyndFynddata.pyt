@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-SokIFynddata.pyt
+SokArtfyndFynddata.pyt
 
 Söker i SLU Artdatabankens Species Observation System (SOS) och skriver
 resultatet till en punkt-featureklass. Sökfiltren följer webbapplikationen
@@ -1944,7 +1944,7 @@ def _write_tool_metadata(tool_cls, toolbox_alias):
 
 class Toolbox:
     def __init__(self):
-        self.label = "Sök i Fynddata"
+        self.label = "Fynddata: sök artfynd"
         self.alias = "fynddata"
         self.tools = [SokIFynddata, UppdateraReferenslistor]
         for tool in self.tools:
