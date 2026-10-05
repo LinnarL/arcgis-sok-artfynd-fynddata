@@ -41,7 +41,9 @@ Kör sökningen och skapar featureklassen. Parametrarna är grupperade i kategor
 | 2. Tid | Hur perioden jämförs | Överlappande (periodfynd), helt inom, endast start-, endast slutdatum |
 | 2. Tid | Tid på dygnet | Morgon, förmiddag, eftermiddag, kväll |
 | 2. Tid | Registrerad/ändrad från och till | Filtrerar på när fyndet registrerades, inte när det observerades |
-| 3. Geografi | Sökområde | Ritad polygon, eller ett polygonlager |
+| 3. Geografi | Avgränsa området med | Ingen polygon eller utbredning (förval), Polygoner eller Utbredning |
+| 3. Geografi | Polygoner | Polygonlager (urval respekteras) eller polygoner ritade i kartan. Aktiv vid Polygoner |
+| 3. Geografi | Utbredning | Kartvyns utbredning, ett lagers utbredning, ritad rektangel eller koordinater. Aktiv vid Utbredning |
 | 3. Geografi | Områdestyp och Områden | Län, kommun, provins, socken, vattenområde med flera |
 | 3. Geografi | Ta hänsyn till fyndets noggrannhet | Tar med fynd vars osäkerhetsradie når in i området |
 | 3. Geografi | Inkludera fynd utanför Sverige | |
@@ -55,8 +57,19 @@ Kör sökningen och skapar featureklassen. Parametrarna är grupperade i kategor
 | 6. Utdata | Koordinatsystem | Tomt ger SWEREF99TM |
 | 6. Utdata | Max antal poster | Tomt ger alla träffar |
 
-Sökområde och områdesval kan kombineras. Utan någon avgränsning alls matchar sökningen hela
-databasen, och verktyget varnar för det i dialogen.
+Geografin är frivillig. Polygoner eller utbredning kan kombineras med områdesval, och då måste
+ett fynd ligga i båda. Utan någon avgränsning alls matchar sökningen hela databasen, och
+verktyget varnar för det i dialogen.
+
+Polygoner och utbredning skickas till SOS som polygoner i WGS84. Hål i polygoner följer med som
+hål. En utbredning förtätas till 16 punkter per sida innan den projiceras, så att rektangeln
+behåller sin form. Inskrivna koordinater har inget eget koordinatsystem och tolkas i den aktiva
+kartans system, eller i SWEREF 99 TM när verktyget körs utan karta. Kommer utbredningen från ett
+lager används lagrets system. Vilket som användes, och sökområdets hörn och omslutande rektangel
+i WGS84, skrivs i meddelandena. Ett polygonlager utan koordinatsystem avbryter körningen i
+stället för att söka på fel plats.
+
+Från skript accepteras även den äldre etiketten `Polygoner i ett lager` för Polygoner.
 
 ### Uppdatera referenslistor
 
@@ -70,8 +83,8 @@ en gång innan de går att välja. Verktyget varnar i dialogen när en lista sak
 En förinställning är en JSON-fil i `%LOCALAPPDATA%\ArcGIS Fynddata\presets`. Den omfattar alla
 sökparametrar men aldrig utdata eller API-nyckeln. Filerna går att kopiera mellan datorer.
 
-Ett ritat sökområde sparas inte, eftersom en ritad geometri inte finns kvar mellan körningar.
-Peka ut ett polygonlager i stället om området ska följa med.
+Ritade polygoner och valt polygonlager sparas inte. Valet av avgränsning och en utbredning
+sparas, utbredningen med sitt koordinatsystem.
 
 ## Om datakällan
 

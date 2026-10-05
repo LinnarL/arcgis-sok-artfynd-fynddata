@@ -18,6 +18,11 @@ Endpoints som används (verifierade mot v1 2026-08-25):
     GET  /TaxonLists                   - artlistornas id
     GET  /DataProviders                - datasetens id
 
+Sökområde: geographics.geometries, en lista med GeoJSON-polygoner i WGS84
+({"type": "polygon", "coordinates": [yttre ring, hål ...]}). Hål respekteras
+(kontrollerat 2026-10-05: ruta 1 574 träffar, inre ruta 226, ruta med den
+inre som hål 1 348).
+
 Begränsningar i det publika API:et:
   - Skyddade (skyddsklassade) fynd kräver personlig inloggning (OAuth). Med enbart
     en API-nyckel returneras det publika urvalet.
@@ -34,6 +39,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
+from xml.sax.saxutils import escape
 
 # =============================================================================
 # Konstanter
@@ -53,6 +60,20 @@ APP_DIR = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
                        "ArcGIS Fynddata")
 PRESET_DIR = os.path.join(APP_DIR, "presets")
 CACHE_DIR = os.path.join(APP_DIR, "cache")
+
+# --- Avgränsning med polygon eller utbredning --------------------------------
+# Geografi är frivillig i det här verktyget, så valet har ett tredje alternativ
+# utan polygon eller utbredning. Områdesvalen (län, kommun ...) gäller oavsett.
+
+AOI_NONE = "Ingen polygon eller utbredning"
+AOI_POLYGONS = "Polygoner (lager eller ritade i kartan)"
+AOI_EXTENT = "Utbredning (kartvy, lager eller koordinater)"
+# Äldre etikett som skript kan skicka. Visas inte i listan.
+AOI_ALIASES = {"Polygoner i ett lager": AOI_POLYGONS}
+
+# Antal punkter per sida när en utbredning görs om till polygon, så att
+# rektangeln behåller sin form efter omprojicering till WGS84.
+EXTENT_DENSIFY = 16
 
 # --- Rödlistekategorier ------------------------------------------------------
 
@@ -657,6 +678,167 @@ FIELD_MAP = [
     ("isGeneralized", "diffuserad", "TEXT", 10, "Diffuserad"),
 ]
 
+# =============================================================================
+# Verktygstips
+# =============================================================================
+# Visas i verktygsdialogen. arcpy.Parameter har inget attribut för detta; Pro
+# läser texten ur <verktygslåda>.<verktyg>.pyt.xml, som _write_tool_metadata
+# skriver från den här tabellen. Nyckel: verktygsklassens namn, parameternamn.
+
+_KEY_TIP = (
+    "Prenumerationsnyckel till Species Observation System, skickas som "
+    "Ocp-Apim-Subscription-Key. Hämtas gratis på api-portal.artdatabanken.se. "
+    "Nyckeln ger det publika urvalet; skyddade fynd kräver personlig inloggning "
+    "och kommer inte med."
+)
+
+TOOLTIPS = {
+    "SokIFynddata": {
+        "out_fc": (
+            "Punkt-featureklass som skapas, en punkt per fynd med 57 attributfält. "
+            "Finns den redan skrivs den över. Om sökningen ger noll träffar skapas "
+            "ingen featureklass."
+        ),
+        "api_key": _KEY_TIP + " Sparas aldrig i en förinställning.",
+        "preset": (
+            "Läser in en sparad förinställning och fyller i sökparametrarna. Värden "
+            "du ändrar efteråt behålls. Förinställningarna ligger som JSON-filer i "
+            "%LOCALAPPDATA%\\ArcGIS Fynddata\\presets."
+        ),
+        "save_preset": (
+            "Namn att spara de aktuella sökparametrarna under när verktyget körs. "
+            "En förinställning med samma namn skrivs över. Utdata, API-nyckel och "
+            "polygoner (lager eller ritade) sparas inte; en utbredning gör det."
+        ),
+        "delete_preset": (
+            "Tar bort den förinställning som är vald ovan när verktyget körs. "
+            "Sökningen körs ändå."
+        ),
+        "taxon_ids": (
+            "Dyntaxa-id för de taxa som ska sökas, till exempel 100024 för utter. "
+            "Flera id avgränsas med komma, semikolon, blanksteg eller radbrytning. "
+            "Tomt betyder alla taxa."
+        ),
+        "include_underlying": (
+            "Ta med alla taxa under de angivna, till exempel alla arter i ett släkte. "
+            "Förvalt är ja. Gäller bara när taxon-id är angivna."
+        ),
+        "only_species": (
+            "Ta bara med fynd bestämda till art. Fynd bestämda till släkte, "
+            "underart eller hybrid utesluts."
+        ),
+        "redlist_categories": (
+            "Ta bara med taxa i de valda kategorierna i den aktuella rödlistan. "
+            "Tomt betyder ingen begränsning."
+        ),
+        "taxon_lists": (
+            "Artlistor från Artdatabanken, till exempel fridlysta arter, signalarter "
+            "och direktivens bilagor. Hur de kombineras med övriga taxonval styrs av "
+            "Artlistornas roll."
+        ),
+        "taxon_list_operator": (
+            "Komplettera (Merge) lägger artlistornas taxa till de angivna taxon-id. "
+            "Begränsa (Filter) behåller bara de angivna taxon-id som också finns på "
+            "någon av listorna."
+        ),
+        "only_invasive": "Ta bara med taxa som räknas som främmande i Sverige.",
+        "date_preset": (
+            "Observationsdatum. Senaste 5 och 25 åren räknas från 1 januari, så att "
+            "hela år kommer med. Anpassat aktiverar Från och Till."
+        ),
+        "start_date": "Periodens första dag. Används bara när tidsperioden är Anpassat.",
+        "end_date": "Periodens sista dag. Används bara när tidsperioden är Anpassat.",
+        "date_filter_type": (
+            "Hur fyndets start- och slutdatum jämförs med perioden. Överlappar tar "
+            "med fynd som sträcker sig över periodgränsen, till exempel en fälla "
+            "som stått ute i flera veckor."
+        ),
+        "time_ranges": "Ta bara med fynd gjorda under de valda delarna av dygnet.",
+        "modified_from": (
+            "Ta bara med fynd som registrerats eller ändrats detta datum eller "
+            "senare. Användbart för att hämta det som tillkommit sedan förra sökningen."
+        ),
+        "modified_to": "Ta bara med fynd som registrerats eller ändrats senast detta datum.",
+        "aoi_mode": (
+            "Hur sökningen avgränsas geografiskt, utöver eventuella områden nedan. "
+            "'Ingen polygon eller utbredning' söker i hela Sverige, eller bara i de "
+            "valda områdena. 'Polygoner' söker inom polygoner i ett lager eller som "
+            "du ritar i kartan. 'Utbredning' söker inom en rektangel: kartvyns "
+            "aktuella utbredning, ett lagers utbredning, en ritad rektangel eller "
+            "inskrivna koordinater."
+        ),
+        "aoi": (
+            "Polygoner som avgränsar sökningen. Välj ett polygonlager i listan, eller "
+            "rita polygoner i kartan med pennan. Har lagret ett urval används bara de "
+            "valda polygonerna. Lagret måste ha ett koordinatsystem. Stora eller "
+            "detaljerade polygoner gör anropet större; förenkla dem om sökningen blir "
+            "långsam. Används bara när avgränsningen är Polygoner."
+        ),
+        "aoi_extent": (
+            "Rektangel som avgränsar sökningen. I listan finns kartvyns aktuella "
+            "utbredning och varje lagers utbredning; du kan också rita en rektangel "
+            "eller skriva in koordinater. Inskrivna koordinater tolkas i den aktiva "
+            "kartans koordinatsystem, eller SWEREF 99 TM om ingen karta är öppen. "
+            "Vilket som användes står i meddelandena. Används bara när avgränsningen "
+            "är Utbredning."
+        ),
+        "area_type": (
+            "Typ av administrativt eller annat namngivet område. Län, kommun och "
+            "provins finns inbyggda. Övriga typer måste först hämtas med verktyget "
+            "Uppdatera referenslistor."
+        ),
+        "area_names": (
+            "Ett eller flera områden av vald typ. Namn som finns flera gånger visas "
+            "med sitt id inom parentes. Kombineras med polygon eller utbredning: då "
+            "krävs att fyndet ligger i båda."
+        ),
+        "consider_accuracy": (
+            "Ta också med fynd vars osäkerhetsradie når in i sökområdet, fast själva "
+            "koordinaten ligger utanför. Ger fler träffar längs kanterna."
+        ),
+        "outside_sweden": "Ta också med fynd utanför Sverige. Förvalt är bara fynd i Sverige.",
+        "max_accuracy": (
+            "Uteslut fynd med sämre koordinatnoggrannhet än detta, i meter. "
+            "Tomt betyder ingen gräns."
+        ),
+        "occurrence_status": (
+            "Förvalt är endast observerade fynd. Ej observerad betyder att arten "
+            "eftersöktes men inte hittades."
+        ),
+        "not_recovered": (
+            "Ej återfunna är fynd där arten eftersöktes på en tidigare känd lokal "
+            "utan att hittas igen."
+        ),
+        "determination": "Filtrera på om rapportören angav artbestämningen som osäker.",
+        "verification": "Filtrera på om fyndet har granskats och verifierats av en expert.",
+        "bird_nest": (
+            "Bara för fåglar i Artportalen. Tar med fynd med valt häckningskriterium "
+            "och alla säkrare kriterier."
+        ),
+        "providers": (
+            "De dataset som ska sökas. Tomt betyder alla. Artportalen är den "
+            "överlägset största källan."
+        ),
+        "out_sr": (
+            "Koordinatsystem för utdata. Förvalt och tomt ger SWEREF 99 TM. Punkterna "
+            "byggs från fyndets WGS84-koordinat och projiceras hit."
+        ),
+        "max_records": (
+            "Största antal poster att hämta. Tomt hämtar alla träffar. Hämtningen "
+            "sker 1 000 poster per anrop, så hundratusentals poster tar flera minuter "
+            "och mycket minne."
+        ),
+    },
+    "UppdateraReferenslistor": {
+        "api_key": _KEY_TIP,
+        "area_types": (
+            "Områdestyper vars namnlistor hämtas och sparas i "
+            "%LOCALAPPDATA%\\ArcGIS Fynddata\\cache. Befintliga listor skrivs över. "
+            "Skyddad natur och naturtyp är flera tusen poster och tar längre tid."
+        ),
+    },
+}
+
 
 # =============================================================================
 # Småhjälpare
@@ -1015,47 +1197,186 @@ def _delete_preset(name):
 # Sökområde
 # =============================================================================
 
-def _aoi_geometries(aoi_value, messages=None):
-    """Polygonerna i sökområdet som GeoJSON i WGS84.
+_SCHEMA_PATH = None
 
-    SOS vill ha longitud/latitud. Ett lager utan koordinatsystem går inte att
-    projicera: projectAs() returnerar då indata oförändrat i stället för att
-    fela, vilket ger tyst fel geografi. Därför avbryter vi i stället.
-    """
+
+def _polygon_schema():
+    """Tom polygon-featureklass i SWEREF 99 TM, standardvärde för Feature
+    Set-parametern så att dialogens ritverktyg ritar polygoner.
+
+    Unikt namn i stället för Exists/Delete på ett fast namn: memory delas av
+    hela Pro-sessionen, och Delete där har felat oförutsägbart. Samma klass
+    återanvänds inom processen, eftersom getParameterInfo anropas ofta."""
+    global _SCHEMA_PATH
+    if _SCHEMA_PATH and arcpy.Exists(_SCHEMA_PATH):
+        return _SCHEMA_PATH
+    name = "aoi_schema_{}".format(uuid.uuid4().hex[:12])
+    arcpy.management.CreateFeatureclass("memory", name, "POLYGON",
+                                        spatial_reference=arcpy.SpatialReference(SWEREF99TM))
+    _SCHEMA_PATH = "memory/" + name
+    return _SCHEMA_PATH
+
+
+def _aoi_mode(parameter):
+    """Valt sätt att avgränsa, med äldre etiketter översatta. Tomt blir AOI_NONE."""
+    text = (parameter.valueAsText or "").strip()
+    text = AOI_ALIASES.get(text, text)
+    return text if text in (AOI_POLYGONS, AOI_EXTENT) else AOI_NONE
+
+
+def _valid_sr(sr):
+    # factoryCode 0 kan vara en giltig egen projektion; titta på definitionen.
+    return sr is not None and bool(sr.factoryCode or sr.exportToString())
+
+
+def _is_layer(value):
+    """Sant för ett kartlager (arcpy.mp.Layer). Ett lager kan vara stort, så
+    det räknas inte i updateMessages."""
+    return hasattr(value, "isFeatureLayer") or type(value).__name__ == "Layer"
+
+
+def _aoi_polygons(aoi_value):
+    """Polygonerna i Feature Set-parametern, i sitt eget koordinatsystem.
+
+    Värdet är ett Layer (med urval), ett ritat record set eller en sökväg.
+    SearchCursor och Describe fungerar på alla tre, och på ett lager med urval
+    ger markören bara de valda objekten. Standardvärdet är en tom polygonklass,
+    så "inget ritat och inget lager valt" är inte None utan noll polygoner."""
     if aoi_value is None:
-        return []
+        raise ValueError("Rita minst en polygon i kartan eller välj ett polygonlager.")
 
-    wgs84 = arcpy.SpatialReference(WGS84)
-    geometries = []
-
-    describe = arcpy.Describe(aoi_value)
-    source_sr = getattr(describe, "spatialReference", None)
-    if source_sr is None or not (source_sr.factoryCode or source_sr.exportToString()):
+    sr = getattr(arcpy.Describe(aoi_value), "spatialReference", None)
+    if not _valid_sr(sr):
+        # projectAs() på en geometri utan koordinatsystem returnerar indata
+        # oförändrat i stället för att fela, vilket ger tyst fel geografi.
         raise ValueError(
-            "Sökområdet saknar koordinatsystem. Ange ett koordinatsystem för "
+            "Polygonerna saknar koordinatsystem. Ange ett koordinatsystem för "
             "lagret innan sökningen körs."
         )
 
+    shapes = []
     with arcpy.da.SearchCursor(aoi_value, ["SHAPE@"]) as cursor:
         for (shape,) in cursor:
-            if shape is None:
-                continue
+            if shape is not None and shape.area > 0:
+                shapes.append(shape)
+    if not shapes:
+        raise ValueError("Rita minst en polygon i kartan eller välj ett polygonlager.")
+    return shapes, sr
+
+
+def _active_map_sr():
+    try:
+        active = arcpy.mp.ArcGISProject("CURRENT").activeMap
+        if active is not None and _valid_sr(active.spatialReference):
+            return active.spatialReference, active.name
+    except Exception:
+        pass
+    return None, None
+
+
+def _aoi_from_extent(value, text, messages=None):
+    """En GPExtent-parameter som förtätad rektangel i sitt eget koordinatsystem.
+
+    .value är ett geoprocessing-extentobjekt, inte arcpy.Extent. Hörnen är
+    vanliga tal. Koordinatsystemet följer bara med när utbredningen kommer från
+    ett lager eller en datakälla, och då bara som WKT2 i valueAsText efter de
+    fyra talen. Inskrivna koordinater har inget; de tolkas i den aktiva kartans
+    koordinatsystem, eftersom en utbredning vald i dialogen anges i kartans
+    koordinater. Utan aktiv karta (fristående skript) antas SWEREF 99 TM.
+    """
+    if value is None or not text:
+        raise ValueError("Ange en utbredning.")
+    xmin, ymin, xmax, ymax = (float(value.XMin), float(value.YMin),
+                              float(value.XMax), float(value.YMax))
+    if not (xmax > xmin and ymax > ymin):
+        raise ValueError("Utbredningen har ingen yta.")
+
+    sr = None
+    parts = text.split(" ", 4)
+    if len(parts) == 5 and parts[4].strip():
+        sr = arcpy.SpatialReference()
+        try:
+            sr.loadFromString(parts[4].strip())
+        except Exception:
+            sr = None
+    if _valid_sr(sr):
+        source = "utbredningens eget koordinatsystem"
+    else:
+        sr, map_name = _active_map_sr()
+        if _valid_sr(sr):
+            source = "den aktiva kartans koordinatsystem ({})".format(map_name)
+        else:
+            sr = arcpy.SpatialReference(SWEREF99TM)
+            source = "ingen aktiv karta, så SWEREF 99 TM antas"
+    _log(messages, "  Utbredningen tolkas i {}: {}.".format(sr.name, source))
+
+    # Förtäta kanterna, så att en utbredning i ett annat system inte blir en
+    # för liten fyrhörning efter omprojicering till WGS84.
+    n = EXTENT_DENSIFY
+    pts = ([(xmin + (xmax - xmin) * i / n, ymin) for i in range(n)]
+           + [(xmax, ymin + (ymax - ymin) * i / n) for i in range(n)]
+           + [(xmax - (xmax - xmin) * i / n, ymax) for i in range(n)]
+           + [(xmin, ymax - (ymax - ymin) * i / n) for i in range(n)])
+    poly = arcpy.Polygon(arcpy.Array([arcpy.Point(x, y) for x, y in pts]), sr)
+    return [poly], sr
+
+
+def _geojson_wgs84(shapes, source_sr):
+    """Polygoner som SOS-geometrier (GeoJSON-polygoner i WGS84).
+
+    En del i en arcpy-polygon är en yttre ring följd av eventuella hål, åtskilda
+    av None. Varje ring blir en egen koordinatlista, så att hål förblir hål."""
+    if not _valid_sr(source_sr):
+        raise ValueError("Sökområdet saknar koordinatsystem.")
+    wgs84 = arcpy.SpatialReference(WGS84)
+    geometries = []
+    for shape in shapes:
+        if source_sr.factoryCode != WGS84:
             shape = shape.projectAs(wgs84)
-            for part in shape:
-                ring = [[round(point.X, 7), round(point.Y, 7)]
-                        for point in part if point is not None]
-                if len(ring) < 3:
+        if shape is None or shape.pointCount == 0:
+            continue
+        for part in shape:
+            rings, ring = [], []
+            for point in list(part) + [None]:
+                if point is not None:
+                    ring.append([round(point.X, 7), round(point.Y, 7)])
                     continue
-                if ring[0] != ring[-1]:
-                    ring.append(ring[0])
-                geometries.append({"type": "polygon", "coordinates": [ring]})
-
+                if len(ring) >= 3:
+                    if ring[0] != ring[-1]:
+                        ring.append(ring[0])
+                    rings.append(ring)
+                ring = []
+            if rings:
+                geometries.append({"type": "polygon", "coordinates": rings})
     if not geometries:
-        raise ValueError("Sökområdet innehåller inga giltiga polygoner.")
-
-    _log(messages, "  Sökområde: {} polygon(er), {} hörn totalt.".format(
-        len(geometries), sum(len(g["coordinates"][0]) for g in geometries)))
+        raise ValueError("Sökområdet kunde inte omvandlas till WGS84.")
     return geometries
+
+
+def _geometry_summary(geometries):
+    """Antal polygoner, hörn och omslutande rektangel i WGS84, för loggen."""
+    coords = [c for g in geometries for ring in g["coordinates"] for c in ring]
+    lons = [c[0] for c in coords]
+    lats = [c[1] for c in coords]
+    return ("{} polygon(er), {} hörn, longitud {:.5f} till {:.5f}, "
+            "latitud {:.5f} till {:.5f} (WGS84)".format(
+                len(geometries), len(coords), min(lons), max(lons),
+                min(lats), max(lats)))
+
+
+def _aoi_geometries(parameters, messages=None):
+    """SOS-geometrierna för vald avgränsning, eller [] utan polygon/utbredning."""
+    mode = _aoi_mode(parameters[P_AOI_MODE])
+    if mode == AOI_POLYGONS:
+        shapes, sr = _aoi_polygons(parameters[P_AOI].value)
+        _log(messages, "  Avgränsning: {} polygon(er) ur lager eller ritning, {}.".format(
+            len(shapes), sr.name))
+    elif mode == AOI_EXTENT:
+        shapes, sr = _aoi_from_extent(parameters[P_AOI_EXTENT].value,
+                                      parameters[P_AOI_EXTENT].valueAsText, messages)
+    else:
+        return []
+    return _geojson_wgs84(shapes, sr)
 
 
 # =============================================================================
@@ -1317,18 +1638,39 @@ def _build_feature_class(out_fc, observations, out_sr, messages):
 # Parameterindex. FIRST_SAVED..LAST_SAVED är det som en förinställning omfattar.
 # Utdata och API-nyckel ligger utanför med flit.
 
-P_OUT, P_KEY = 0, 1
-P_PRESET, P_SAVE_PRESET, P_DELETE_PRESET = 2, 3, 4
-P_TAXON_IDS, P_UNDERLYING, P_ONLY_SPECIES = 5, 6, 7
-P_REDLIST, P_TAXON_LISTS, P_LIST_OPERATOR, P_INVASIVE = 8, 9, 10, 11
-P_DATE_PRESET, P_START, P_END, P_DATE_TYPE = 12, 13, 14, 15
-P_TIME_RANGES, P_MODIFIED_FROM, P_MODIFIED_TO = 16, 17, 18
-P_AOI, P_AREA_TYPE, P_AREA_NAMES = 19, 20, 21
-P_CONSIDER_ACC, P_OUTSIDE_SWEDEN = 22, 23
-P_MAX_ACC, P_OCCURRENCE, P_NOT_RECOVERED = 24, 25, 26
-P_DETERMINATION, P_VERIFICATION, P_BIRD_NEST = 27, 28, 29
-P_PROVIDERS = 30
-P_OUT_SR, P_MAX_RECORDS = 31, 32
+# Parameternamnen i samma ordning som getParameterInfo returnerar dem. Indexen
+# härleds ur listan, och getParameterInfo kontrollerar ordningen, så att ett
+# tillagt eller flyttat fält inte tyst förskjuter dem.
+PARAM_ORDER = (
+    "out_fc", "api_key", "preset", "save_preset", "delete_preset",
+    "taxon_ids", "include_underlying", "only_species", "redlist_categories",
+    "taxon_lists", "taxon_list_operator", "only_invasive",
+    "date_preset", "start_date", "end_date", "date_filter_type", "time_ranges",
+    "modified_from", "modified_to",
+    "aoi_mode", "aoi", "aoi_extent", "area_type", "area_names",
+    "consider_accuracy", "outside_sweden",
+    "max_accuracy", "occurrence_status", "not_recovered", "determination",
+    "verification", "bird_nest", "providers", "out_sr", "max_records",
+)
+_IX = {name: index for index, name in enumerate(PARAM_ORDER)}
+
+P_OUT, P_KEY = _IX["out_fc"], _IX["api_key"]
+P_PRESET, P_SAVE_PRESET, P_DELETE_PRESET = _IX["preset"], _IX["save_preset"], _IX["delete_preset"]
+P_TAXON_IDS, P_UNDERLYING = _IX["taxon_ids"], _IX["include_underlying"]
+P_ONLY_SPECIES, P_REDLIST = _IX["only_species"], _IX["redlist_categories"]
+P_TAXON_LISTS, P_LIST_OPERATOR = _IX["taxon_lists"], _IX["taxon_list_operator"]
+P_INVASIVE = _IX["only_invasive"]
+P_DATE_PRESET, P_START, P_END = _IX["date_preset"], _IX["start_date"], _IX["end_date"]
+P_DATE_TYPE, P_TIME_RANGES = _IX["date_filter_type"], _IX["time_ranges"]
+P_MODIFIED_FROM, P_MODIFIED_TO = _IX["modified_from"], _IX["modified_to"]
+P_AOI_MODE, P_AOI, P_AOI_EXTENT = _IX["aoi_mode"], _IX["aoi"], _IX["aoi_extent"]
+P_AREA_TYPE, P_AREA_NAMES = _IX["area_type"], _IX["area_names"]
+P_CONSIDER_ACC, P_OUTSIDE_SWEDEN = _IX["consider_accuracy"], _IX["outside_sweden"]
+P_MAX_ACC, P_OCCURRENCE = _IX["max_accuracy"], _IX["occurrence_status"]
+P_NOT_RECOVERED, P_DETERMINATION = _IX["not_recovered"], _IX["determination"]
+P_VERIFICATION, P_BIRD_NEST = _IX["verification"], _IX["bird_nest"]
+P_PROVIDERS = _IX["providers"]
+P_OUT_SR, P_MAX_RECORDS = _IX["out_sr"], _IX["max_records"]
 
 FIRST_SAVED, LAST_SAVED = P_TAXON_IDS, P_MAX_RECORDS
 
@@ -1450,8 +1792,7 @@ def _describe_filter(search_filter):
 
     geographics = search_filter.get("geographics") or {}
     if geographics.get("geometries"):
-        lines.append("  Ritat sökområde: {} polygon(er)".format(
-            len(geographics["geometries"])))
+        lines.append("  Sökområde: " + _geometry_summary(geographics["geometries"]))
     if geographics.get("areas"):
         lines.append("  Områden: {} st".format(len(geographics["areas"])))
     if geographics.get("maxAccuracy"):
@@ -1497,7 +1838,7 @@ def _run(parameters, messages):
                 parameters[P_PRESET].valueAsText))
 
     arguments = _collect(parameters)
-    arguments["geometries"] = _aoi_geometries(parameters[P_AOI].value, messages)
+    arguments["geometries"] = _aoi_geometries(parameters, messages)
     search_filter = build_filter(**arguments)
 
     _log(messages, "Sökfilter:")
@@ -1529,6 +1870,74 @@ def _run(parameters, messages):
     return written
 
 
+def _has_polygons(parameter):
+    """Billig kontroll för updateMessages: finns minst en polygon?
+
+    Ett kartlager räknas inte (det kan vara stort eller en tjänst); det prövas
+    vid körningen. Ritade polygoner och sökvägar läses bara till första raden."""
+    if not parameter.valueAsText:
+        return False
+    value = parameter.value
+    if _is_layer(value):
+        return True
+    try:
+        with arcpy.da.SearchCursor(value, ["OID@"]) as cursor:
+            return next(iter(cursor), None) is not None
+    except Exception:
+        return True          # osäkert här; körningen ger ett läsbart fel
+
+
+def _write_tool_metadata(tool_cls, toolbox_alias):
+    """Skriv verktygets metadatafil med parameterförklaringar från TOOLTIPS.
+
+    Pro läser verktygstipsen i dialogen från <verktygslåda>.<verktyg>.pyt.xml
+    (elementet dialogReference per parameter). Filen skrivs bara om innehållet
+    har ändrats, och den är gitignorerad: texten bor här i TOOLTIPS."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    toolbox = os.path.splitext(os.path.basename(__file__))[0]
+    path = os.path.join(here, "{}.{}.pyt.xml".format(toolbox, tool_cls.__name__))
+    tips = TOOLTIPS.get(tool_cls.__name__, {})
+
+    def html(text):
+        body = escape(text).replace("\n", "</SPAN></P><P><SPAN>")
+        return escape('<DIV STYLE="text-align:Left;"><P><SPAN>{}</SPAN></P></DIV>'.format(body))
+
+    tool = tool_cls()
+    params = []
+    for item in tool.getParameterInfo():
+        tip = tips.get(item.name)
+        if not tip:
+            continue
+        params.append(
+            '<param name="{n}" displayname="{d}" type="{t}" direction="{r}">'
+            "<dialogReference>{h}</dialogReference>"
+            "<pythonReference>{h}</pythonReference></param>".format(
+                n=item.name, d=escape(item.displayName, {'"': "&quot;"}),
+                t=item.parameterType, r=item.direction, h=html(tip))
+        )
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<metadata xml:lang="sv"><Esri><ArcGISFormat>1.0</ArcGISFormat></Esri>'
+        '<tool name="{name}" displayname="{label}" toolboxalias="{alias}" xmlns="">'
+        "<parameters>{params}</parameters><summary>{summary}</summary></tool>"
+        "<dataIdInfo><idCitation><resTitle>{label}</resTitle></idCitation>"
+        "<idAbs>{summary}</idAbs></dataIdInfo></metadata>\n"
+    ).format(name=tool_cls.__name__, label=escape(tool.label), alias=toolbox_alias,
+             params="".join(params), summary=html(tool.description))
+
+    try:
+        with open(path, encoding="utf-8") as handle:
+            if handle.read() == xml:
+                return
+    except OSError:
+        pass
+    try:
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(xml)
+    except OSError:
+        pass                 # skrivskyddad plats: verktyget fungerar, utan tips
+
+
 # =============================================================================
 # Toolbox
 # =============================================================================
@@ -1538,6 +1947,8 @@ class Toolbox:
         self.label = "Sök i Fynddata"
         self.alias = "fynddata"
         self.tools = [SokIFynddata, UppdateraReferenslistor]
+        for tool in self.tools:
+            _write_tool_metadata(tool, self.alias)
 
 
 class SokIFynddata:
@@ -1634,9 +2045,18 @@ class SokIFynddata:
 
         # -- 3. Geografi --
         cat = "3. Geografi"
-        aoi = parameter("aoi", "Sökområde (rita polygon i kartan)",
-                        "GPFeatureRecordSetLayer", category=cat)
+        aoi_mode = parameter("aoi_mode", "Avgränsa området med", "GPString",
+                             category=cat)
+        aoi_mode.filter.type = "ValueList"
+        aoi_mode.filter.list = [AOI_NONE, AOI_POLYGONS, AOI_EXTENT]
+        aoi_mode.value = AOI_NONE
+        # Båda är Optional i ramverket; updateMessages kräver den som valts.
+        aoi = parameter("aoi", "Polygoner", "GPFeatureRecordSetLayer", category=cat)
         aoi.filter.list = ["Polygon"]
+        # En tom polygonklass som standardvärde gör att pennan i dialogen ritar
+        # polygoner. Följden är att "inget valt" inte är None utan noll objekt.
+        aoi.value = _polygon_schema()
+        aoi_extent = parameter("aoi_extent", "Utbredning", "GPExtent", category=cat)
         area_type = parameter("area_type", "Områdestyp", "GPString", category=cat)
         area_type.filter.type = "ValueList"
         area_type.filter.list = _labels(AREA_TYPES)
@@ -1696,16 +2116,19 @@ class SokIFynddata:
         max_records = parameter("max_records", "Max antal poster", "GPLong",
                                 category=cat)
 
-        return [out_fc, api_key,
-                preset, save_preset, delete_preset,
-                taxon_ids, underlying, only_species, redlist, lists, operator, invasive,
-                date_preset, start, end, date_type, time_ranges,
-                modified_from, modified_to,
-                aoi, area_type, area_names, consider_acc, outside,
-                max_acc, occurrence, not_recovered, determination, verification,
-                bird_nest,
-                providers,
-                out_sr, max_records]
+        params = [out_fc, api_key,
+                  preset, save_preset, delete_preset,
+                  taxon_ids, underlying, only_species, redlist, lists, operator, invasive,
+                  date_preset, start, end, date_type, time_ranges,
+                  modified_from, modified_to,
+                  aoi_mode, aoi, aoi_extent, area_type, area_names, consider_acc, outside,
+                  max_acc, occurrence, not_recovered, determination, verification,
+                  bird_nest,
+                  providers,
+                  out_sr, max_records]
+        if tuple(item.name for item in params) != PARAM_ORDER:
+            raise RuntimeError("Parameterordningen stämmer inte med PARAM_ORDER.")
+        return params
 
     def isLicensed(self):
         return True
@@ -1747,6 +2170,16 @@ class SokIFynddata:
         custom = parameters[P_DATE_PRESET].valueAsText == "Anpassat"
         parameters[P_START].enabled = custom
         parameters[P_END].enabled = custom
+
+        # Äldre etikett från skript översätts innan ramverket prövar värdet
+        # mot listan. Bara den valda avgränsningens parameter är aktiv.
+        mode_parameter = parameters[P_AOI_MODE]
+        alias = AOI_ALIASES.get(mode_parameter.valueAsText or "")
+        if alias:
+            mode_parameter.value = alias
+        mode = _aoi_mode(mode_parameter)
+        parameters[P_AOI].enabled = mode == AOI_POLYGONS
+        parameters[P_AOI_EXTENT].enabled = mode == AOI_EXTENT
         return
 
     def updateMessages(self, parameters):
@@ -1800,10 +2233,14 @@ class SokIFynddata:
             parameters[P_TAXON_LISTS].value,
             parameters[P_INVASIVE].value,
         ])
-        geo_filter = any([
-            parameters[P_AOI].value,
-            parameters[P_AREA_NAMES].value,
-        ])
+        mode = _aoi_mode(parameters[P_AOI_MODE])
+        if mode == AOI_EXTENT and not parameters[P_AOI_EXTENT].valueAsText:
+            parameters[P_AOI_EXTENT].setErrorMessage("Ange en utbredning.")
+        elif mode == AOI_POLYGONS and not _has_polygons(parameters[P_AOI]):
+            parameters[P_AOI].setErrorMessage(
+                "Rita minst en polygon i kartan eller välj ett polygonlager.")
+
+        geo_filter = mode != AOI_NONE or bool(parameters[P_AREA_NAMES].value)
         if not taxon_filter and not geo_filter:
             parameters[P_OUT].setWarningMessage(
                 "Sökningen saknar både art- och områdesavgränsning och kommer "
@@ -1817,15 +2254,20 @@ class SokIFynddata:
         saved_overwrite = arcpy.env.overwriteOutput
         saved_sr = arcpy.env.outputCoordinateSystem
         arcpy.env.overwriteOutput = True
+        error = None
         try:
             _run(parameters, messages)
         except ValueError as exc:
-            messages.addErrorMessage(str(exc))
-            raise arcpy.ExecuteError
+            # ExecuteError utanför except-blocket, annars skriver ramverket ut
+            # hela den kedjade tracebacken (HTTPError, ValueError ...).
+            error = str(exc)
         finally:
             arcpy.env.overwriteOutput = saved_overwrite
             arcpy.env.outputCoordinateSystem = saved_sr
             arcpy.ResetProgressor()
+        if error:
+            messages.addErrorMessage(error)
+            raise arcpy.ExecuteError
 
     def postExecute(self, parameters):
         return
@@ -1876,6 +2318,7 @@ class UppdateraReferenslistor:
     def execute(self, parameters, messages):
         api_key = (parameters[0].valueAsText or "").strip()
         labels = _clean_multi(parameters[1])
+        error = None
         try:
             arcpy.SetProgressor("step", "Hämtar områden...", 0, len(labels), 1)
             for index, label in enumerate(labels):
@@ -1888,10 +2331,12 @@ class UppdateraReferenslistor:
                 arcpy.SetProgressorPosition(index + 1)
             messages.addMessage("Listorna ligger i {}".format(CACHE_DIR))
         except ValueError as exc:
-            messages.addErrorMessage(str(exc))
-            raise arcpy.ExecuteError
+            error = str(exc)
         finally:
             arcpy.ResetProgressor()
+        if error:
+            messages.addErrorMessage(error)
+            raise arcpy.ExecuteError
 
     def postExecute(self, parameters):
         return
