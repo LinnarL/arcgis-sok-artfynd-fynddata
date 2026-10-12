@@ -14,7 +14,7 @@ Geografi, Fyndegenskaper och Dataset.
 
 ## API-nyckel
 
-Lämna parametern API-nyckel tom och lägg nyckeln i miljövariabeln `ARTDATABANKEN_API_KEY`
+Om du vill slippa lägga in din API-nyckel varje gång, så kan du lämna parametern API-nyckel tom och lägg nyckeln i miljövariabeln `ARTDATABANKEN_API_KEY`
 i stället. En nyckel som skrivs i dialogen sparas i projektets geoprocessing-historik och
 följer med när projektet delas. Sätt variabeln en gång i en kommandotolk och starta sedan om
 ArcGIS Pro, som bara läser miljövariabler när programmet startar:
