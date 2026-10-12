@@ -51,6 +51,11 @@ API_BASE = "https://api.artdatabanken.se/species-observation-system/v1"
 TAKE = 1000                 # API:ets maxvärde per anrop
 HTTP_RETRIES = 4
 HTTP_TIMEOUT = 180
+
+# Miljövariabel som används när parametern API-nyckel lämnas tom. Ett värde
+# som skrivs i dialogen sparas i projektets geoprocessing-historik, det gör
+# inte en miljövariabel.
+API_KEY_ENV = "ARTDATABANKEN_API_KEY"
 USER_AGENT = "ArcGIS-Pro-SokIFynddata/1.0"
 
 SWEREF99TM = 3006
@@ -688,8 +693,10 @@ FIELD_MAP = [
 _KEY_TIP = (
     "Prenumerationsnyckel till Species Observation System, skickas som "
     "Ocp-Apim-Subscription-Key. Hämtas gratis på api-portal.artdatabanken.se. "
-    "Nyckeln ger det publika urvalet; skyddade fynd kräver personlig inloggning "
-    "och kommer inte med."
+    "Lämna tomt för att använda miljövariabeln " + API_KEY_ENV + ", vilket är "
+    "att föredra: en nyckel som skrivs här sparas i projektets geoprocessing-"
+    "historik. Nyckeln ger det publika urvalet; skyddade fynd kräver personlig "
+    "inloggning och kommer inte med."
 )
 
 TOOLTIPS = {
@@ -977,6 +984,21 @@ def _warn(messages, text):
 # =============================================================================
 # HTTP
 # =============================================================================
+
+def _api_key(parameter):
+    """Nyckeln ur parametern, annars ur miljövariabeln. Tom sträng om ingen finns."""
+    value = (parameter.valueAsText or "").strip()
+    return value or os.environ.get(API_KEY_ENV, "").strip()
+
+
+def _check_api_key(parameter):
+    """Felmeddelande i dialogen när varken parameter eller miljövariabel har en nyckel.
+    Miljövariabeln läses när ArcGIS Pro startar, så Pro måste startas om efter setx."""
+    if not _api_key(parameter):
+        parameter.setErrorMessage(
+            "Ange en API-nyckel, eller sätt miljövariabeln {} och starta om "
+            "ArcGIS Pro.".format(API_KEY_ENV))
+
 
 def _headers(api_key):
     return {
@@ -1821,7 +1843,7 @@ def _describe_filter(search_filter):
 
 def _run(parameters, messages):
     """Hela körningen. Skild från execute() så att den går att driva direkt."""
-    api_key = (parameters[P_KEY].valueAsText or "").strip()
+    api_key = _api_key(parameters[P_KEY])
     out_fc = parameters[P_OUT].valueAsText
     max_records = parameters[P_MAX_RECORDS].value or 0
     out_sr = _spatial_reference(parameters[P_OUT_SR])
@@ -1981,7 +2003,7 @@ class SokIFynddata:
         out_fc = parameter("out_fc", "Utdata featureklass", "DEFeatureClass",
                            "Required", direction="Output")
         api_key = parameter("api_key", "API-nyckel (Ocp-Apim-Subscription-Key)",
-                            "GPString", "Required")
+                            "GPString")
 
         # -- Förinställningar --
         cat = "Förinställningar"
@@ -2186,6 +2208,8 @@ class SokIFynddata:
         return
 
     def updateMessages(self, parameters):
+        _check_api_key(parameters[P_KEY])
+
         if parameters[P_DATE_PRESET].valueAsText == "Anpassat":
             if not parameters[P_START].value and not parameters[P_END].value:
                 parameters[P_DATE_PRESET].setErrorMessage(
@@ -2296,7 +2320,7 @@ class UppdateraReferenslistor:
     def getParameterInfo(self):
         api_key = arcpy.Parameter(
             displayName="API-nyckel (Ocp-Apim-Subscription-Key)",
-            name="api_key", datatype="GPString", parameterType="Required",
+            name="api_key", datatype="GPString", parameterType="Optional",
             direction="Input")
 
         area_types = arcpy.Parameter(
@@ -2316,10 +2340,11 @@ class UppdateraReferenslistor:
         return
 
     def updateMessages(self, parameters):
+        _check_api_key(parameters[0])
         return
 
     def execute(self, parameters, messages):
-        api_key = (parameters[0].valueAsText or "").strip()
+        api_key = _api_key(parameters[0])
         labels = _clean_multi(parameters[1])
         error = None
         try:

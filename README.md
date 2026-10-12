@@ -12,6 +12,19 @@ Geografi, Fyndegenskaper och Dataset.
 - En API-nyckel till Species Observation System, hämtas på
   [api-portal.artdatabanken.se](https://api-portal.artdatabanken.se/).
 
+## API-nyckel
+
+Lämna parametern API-nyckel tom och lägg nyckeln i miljövariabeln `ARTDATABANKEN_API_KEY`
+i stället. En nyckel som skrivs i dialogen sparas i projektets geoprocessing-historik och
+följer med när projektet delas. Sätt variabeln en gång i en kommandotolk och starta sedan om
+ArcGIS Pro, som bara läser miljövariabler när programmet startar:
+
+```
+setx ARTDATABANKEN_API_KEY "din-nyckel"
+```
+
+Ett värde i parametern går före miljövariabeln. Finns ingen av dem visar dialogen ett fel.
+
 ## Lägga till i ArcGIS Pro
 
 Katalogfönstret, högerklicka på Toolboxes, Add Toolbox, och peka ut `SokArtfyndFynddata.pyt`.
@@ -25,7 +38,7 @@ Kör sökningen och skapar featureklassen. Parametrarna är grupperade i kategor
 | Kategori | Parameter | Kommentar |
 | --- | --- | --- |
 | | Utdata featureklass | Punktlager, skrivs över om det finns |
-| | API-nyckel | Ocp-Apim-Subscription-Key |
+| | API-nyckel | Tomt ger miljövariabeln `ARTDATABANKEN_API_KEY`, se ovan |
 | Förinställningar | Använd förinställning | Läser in sparade inställningar |
 | Förinställningar | Spara inställningarna som | Sparar allt utom utdata och API-nyckel |
 | Förinställningar | Ta bort vald förinställning | |
