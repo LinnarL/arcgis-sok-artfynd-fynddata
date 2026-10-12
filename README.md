@@ -51,7 +51,7 @@ Kör sökningen och skapar featureklassen. Parametrarna är grupperade i kategor
 | 1. Taxa | Endast främmande arter i Sverige | |
 | 2. Tid | Tidsperiod | Alla år, innevarande, föregående, senaste 5, senaste 25, anpassat |
 | 2. Tid | Från och Till | Aktiva när tidsperioden är Anpassat |
-| 2. Tid | Hur perioden jämförs | Överlappande (periodfynd), helt inom, endast start-, endast slutdatum |
+| 2. Tid | Hur perioden jämförs | Förvalt helt inom perioden. Överlappande motsvarar Inkludera periodfynd |
 | 2. Tid | Tid på dygnet | Morgon, förmiddag, eftermiddag, kväll |
 | 2. Tid | Registrerad/ändrad från och till | Filtrerar på när fyndet registrerades, inte när det observerades |
 | 3. Geografi | Avgränsa området med | Ingen polygon eller utbredning (förval), Polygoner eller Utbredning |
@@ -59,14 +59,14 @@ Kör sökningen och skapar featureklassen. Parametrarna är grupperade i kategor
 | 3. Geografi | Utbredning | Kartvyns utbredning, ett lagers utbredning, ritad rektangel eller koordinater. Aktiv vid Utbredning |
 | 3. Geografi | Områdestyp och Områden | Län, kommun, provins, socken, vattenområde med flera |
 | 3. Geografi | Ta hänsyn till fyndets noggrannhet | Tar med fynd vars osäkerhetsradie når in i området |
-| 3. Geografi | Inkludera fynd utanför Sverige | |
+| 3. Geografi | Inkludera fynd utanför Sverige | Förvalt ja |
 | 4. Fyndegenskaper | Max koordinatnoggrannhet (m) | |
 | 4. Fyndegenskaper | Förekomst | Observerad, ej observerad, eller båda |
 | 4. Fyndegenskaper | Ej återfunna fynd | |
-| 4. Fyndegenskaper | Artbestämning | Endast säker eller endast osäker |
+| 4. Fyndegenskaper | Artbestämning | Förvalt endast säker. Ingen filtrering motsvarar Inkludera osäker artbestämning |
 | 4. Fyndegenskaper | Verifieringsstatus | |
 | 4. Fyndegenskaper | Lägsta häckningskriterium | Endast fåglar i Artportalen. Tar med valt kriterium och alla säkrare |
-| 5. Dataset | Dataset | 26 valbara källor, förvalt är alla |
+| 5. Dataset | Dataset | 26 valbara källor, förvalt alla utom Biologg och Riksskogstaxeringen upphört stickprov |
 | 6. Utdata | Koordinatsystem | Tomt ger SWEREF99TM |
 | 6. Utdata | Max antal poster | Tomt ger alla träffar |
 
@@ -113,6 +113,29 @@ sparas, utbredningen med sitt koordinatsystem.
 - Områdesnamn är inte unika. 187 socknar och 857 skyddade naturområden delar namn med minst ett
   annat område. Sådana namn visas med sitt featureId inom parentes, till exempel
   `Bälinge (212)` och `Bälinge (3071)`, som ligger i Uppsala respektive Västra Götaland.
+
+## Jämfört med Fynddata
+
+Förvalen är desamma som i en ny sökning i Fynddata, så samma sökning ger samma antal fynd.
+Kontrollerat 2026-10-12 mot Fynddata 1.33.1 med rollen Privatperson, genom att läsa det
+sökfilter Fynddata skickar till SOS och jämföra antalet träffar:
+
+| Sökning | Fynddata | Verktyget |
+| --- | --- | --- |
+| Akut hotad (CR), Uppsala kommun, alla år | 2 357 | 2 357 |
+| Akut hotad (CR), Uppsala kommun, 2023 | 196 | 196 |
+| Orkidéväxter, Uppsala län, 2023, med periodfynd | 3 267 | 3 267 |
+
+Det som kan skilja:
+
+- **Skyddade fynd.** Fynddata visar de skyddade fynd din roll ger behörighet till, och för
+  rollen Privatperson dina egna. Verktyget får bara det publika urvalet. Har du en roll med
+  behörighet till skyddade fynd blir Fynddatas antal större.
+- **Taxon-id som klistras in.** I Fynddata söks ett inklistrat taxon-id utan underliggande
+  taxa, medan ett taxon som väljs i sökrutan tar med dem. Verktygets Inkludera underliggande
+  taxa är förvalt ja och motsvarar alltså sökrutan. Kryssa ur den för att få samma resultat
+  som ett inklistrat id.
+- Filter som bara finns i Fynddata, se ovan.
 
 ## Utdata
 

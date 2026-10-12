@@ -160,6 +160,11 @@ PROVIDERS = [
     (29, "Kusttrålning"),
 ]
 
+# Dataset som Fynddata utelämnar i en ny sökning. Uppmätt 2026-10-12: Fynddatas
+# server sätter alla dataset utom dessa när sökformuläret rensas, oavsett vad
+# klienten skickar. I Uppsala län står de för 24 697 fynd.
+DEFAULT_EXCLUDED_PROVIDERS = (18, 28)       # Biologg, Riksskogstaxeringen upphört stickprov
+
 # --- Områdestyper ------------------------------------------------------------
 
 AREA_TYPES = [
@@ -756,9 +761,11 @@ TOOLTIPS = {
         "start_date": "Periodens första dag. Används bara när tidsperioden är Anpassat.",
         "end_date": "Periodens sista dag. Används bara när tidsperioden är Anpassat.",
         "date_filter_type": (
-            "Hur fyndets start- och slutdatum jämförs med perioden. Överlappar tar "
-            "med fynd som sträcker sig över periodgränsen, till exempel en fälla "
-            "som stått ute i flera veckor."
+            "Hur fyndets start- och slutdatum jämförs med perioden. Förvalt är att "
+            "fyndet ska ligga helt inom perioden, som i Fynddata. Överlappar "
+            "motsvarar Inkludera periodfynd i Fynddata och tar också med fynd som "
+            "sträcker sig över periodgränsen, till exempel en fälla som stått ute "
+            "i flera veckor."
         ),
         "time_ranges": "Ta bara med fynd gjorda under de valda delarna av dygnet.",
         "modified_from": (
@@ -803,7 +810,11 @@ TOOLTIPS = {
             "Ta också med fynd vars osäkerhetsradie når in i sökområdet, fast själva "
             "koordinaten ligger utanför. Ger fler träffar längs kanterna."
         ),
-        "outside_sweden": "Ta också med fynd utanför Sverige. Förvalt är bara fynd i Sverige.",
+        "outside_sweden": (
+            "Ta med fynd utanför Sverige, till exempel till havs eller över gränsen "
+            "i ett ritat område. Förvalt är ja, som i Fynddata. Utan kryss tas bara "
+            "fynd i Sverige med."
+        ),
         "max_accuracy": (
             "Uteslut fynd med sämre koordinatnoggrannhet än detta, i meter. "
             "Tomt betyder ingen gräns."
@@ -816,15 +827,20 @@ TOOLTIPS = {
             "Ej återfunna är fynd där arten eftersöktes på en tidigare känd lokal "
             "utan att hittas igen."
         ),
-        "determination": "Filtrera på om rapportören angav artbestämningen som osäker.",
+        "determination": (
+            "Filtrera på om rapportören angav artbestämningen som osäker. Förvalt "
+            "är endast säker artbestämning, som i Fynddata. Ingen filtrering "
+            "motsvarar Inkludera osäker artbestämning."
+        ),
         "verification": "Filtrera på om fyndet har granskats och verifierats av en expert.",
         "bird_nest": (
             "Bara för fåglar i Artportalen. Tar med fynd med valt häckningskriterium "
             "och alla säkrare kriterier."
         ),
         "providers": (
-            "De dataset som ska sökas. Tomt betyder alla. Artportalen är den "
-            "överlägset största källan."
+            "De dataset som ska sökas. Förvalt är samma urval som i Fynddata: alla "
+            "utom Biologg och Riksskogstaxeringen, upphört stickprov. Tomt betyder "
+            "alla dataset. Artportalen är den överlägset största källan."
         ),
         "out_sr": (
             "Koordinatsystem för utdata. Förvalt och tomt ger SWEREF 99 TM. Punkterna "
@@ -854,6 +870,14 @@ TOOLTIPS = {
 def _labels(pairs):
     """Etiketterna ur en lista med (kod, etikett)."""
     return [label for _, label in pairs]
+
+
+def _label_for(pairs, code):
+    """Etiketten för en kod."""
+    for value, text in pairs:
+        if value == code:
+            return text
+    raise KeyError(code)
 
 
 def _code_for(pairs, label):
@@ -1432,12 +1456,12 @@ def build_filter(taxon_ids=None, include_underlying=True, only_species=False,
                  redlist_categories=None, taxon_list_ids=None,
                  taxon_list_operator="Merge", only_invasive=False,
                  date_preset="Alla år", start_date=None, end_date=None,
-                 date_filter_type="OverlappingStartDateAndEndDate",
+                 date_filter_type="BetweenStartDateAndEndDate",
                  time_ranges=None, modified_from=None, modified_to=None,
                  geometries=None, areas=None, consider_accuracy=False,
-                 outside_sweden=False, max_accuracy=None,
+                 outside_sweden=True, max_accuracy=None,
                  occurrence_status="present", not_recovered="NoFilter",
-                 determination="NoFilter",
+                 determination="NotUnsureDetermination",
                  verification="BothVerifiedAndNotVerified",
                  bird_nest_limit=None, provider_ids=None):
     """Bygg en SearchFilterDto. Tar bara vanliga pythonvärden, så att den går
@@ -2058,7 +2082,8 @@ class SokIFynddata:
                               "GPString", category=cat)
         date_type.filter.type = "ValueList"
         date_type.filter.list = _labels(DATE_FILTER_TYPES)
-        date_type.value = _labels(DATE_FILTER_TYPES)[0]
+        # Förval som i Fynddata, där Inkludera periodfynd inte är ikryssat.
+        date_type.value = _label_for(DATE_FILTER_TYPES, "BetweenStartDateAndEndDate")
         time_ranges = parameter("time_ranges", "Tid på dygnet", "GPString",
                                 category=cat, multi=True)
         time_ranges.filter.type = "ValueList"
@@ -2095,7 +2120,7 @@ class SokIFynddata:
         consider_acc.value = False
         outside = parameter("outside_sweden", "Inkludera fynd utanför Sverige",
                             "GPBoolean", category=cat)
-        outside.value = False
+        outside.value = True                # som i Fynddata
 
         # -- 4. Fyndegenskaper --
         cat = "4. Fyndegenskaper"
@@ -2115,7 +2140,7 @@ class SokIFynddata:
                                   category=cat)
         determination.filter.type = "ValueList"
         determination.filter.list = _labels(DETERMINATION)
-        determination.value = _labels(DETERMINATION)[0]
+        determination.value = _label_for(DETERMINATION, "NotUnsureDetermination")
         verification = parameter("verification", "Verifieringsstatus", "GPString",
                                  category=cat)
         verification.filter.type = "ValueList"
@@ -2132,6 +2157,8 @@ class SokIFynddata:
                               category=cat, multi=True)
         providers.filter.type = "ValueList"
         providers.filter.list = _labels(PROVIDERS)
+        providers.value = [label for code, label in PROVIDERS
+                           if code not in DEFAULT_EXCLUDED_PROVIDERS]
 
         # -- 6. Utdata --
         cat = "6. Utdata"
